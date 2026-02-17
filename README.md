@@ -91,4 +91,4 @@ curl -X POST http://localhost:5000/cosine-similarity \
 - All images are automatically resized to 224x224
 - CORS is enabled for Next.js frontend integration
 - The API runs on port 5000 by default
-# product-matcher-python-api
+
