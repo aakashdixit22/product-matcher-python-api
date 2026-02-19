@@ -28,6 +28,7 @@ HF_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/
 # Try both possible environment variable names
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 
+
 if HF_TOKEN:
     logger.info(f"HF_TOKEN loaded: Yes (Token: {HF_TOKEN[:10]}...)")
 else:
@@ -95,6 +96,7 @@ def health_check():
 
 @app.route('/generate-embedding', methods=['POST'])
 def generate_embedding_endpoint():
+    print(HF_TOKEN)  # Debug: Print the token to verify it's loaded (remove in production)
     try:
         logger.info("Received request to /generate-embedding")
         
