@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Use a working CLIP model - LAION maintained version
-HF_API_URL = "https://api-inference.huggingface.co/models/laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
+# Use sentence-transformers CLIP - better supported by HF Inference API
+HF_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 
 if HF_TOKEN:
@@ -30,17 +30,26 @@ else:
 def generate_embedding(img):
     """Generate CLIP embedding via HF Inference API."""
     try:
+        # Convert image to base64 (HF API accepts this format)
         buffered = BytesIO()
         img.save(buffered, format="JPEG")
         img_bytes = buffered.getvalue()
+        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
         logger.info(f"Image size: {len(img_bytes)} bytes")
 
-        headers = {"Content-Type": "application/octet-stream"}
+        headers = {
+            "Content-Type": "application/json"
+        }
         if HF_TOKEN:
             headers["Authorization"] = f"Bearer {HF_TOKEN}"
 
+        # Send as JSON with base64-encoded image
+        payload = {
+            "inputs": img_base64
+        }
+
         logger.info(f"Calling HF API: {HF_API_URL}")
-        response = requests.post(HF_API_URL, headers=headers, data=img_bytes, timeout=30)
+        response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
         logger.info(f"HF API status: {response.status_code}")
 
         if response.status_code != 200:
