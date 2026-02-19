@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Use sentence-transformers CLIP - better supported by HF Inference API
-HF_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
+# Use Hugging Face Inference API (no local model needed!)
+HF_API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 
 if HF_TOKEN:
@@ -28,64 +28,47 @@ else:
 
 
 def generate_embedding(img):
-    """Generate CLIP embedding via HF Inference API."""
+    """Generate embedding using HF Inference API"""
     try:
-        # Convert image to base64 (HF API accepts this format)
+        # Convert image to bytes
         buffered = BytesIO()
         img.save(buffered, format="JPEG")
         img_bytes = buffered.getvalue()
-        img_base64 = base64.b64encode(img_bytes).decode('utf-8')
         logger.info(f"Image size: {len(img_bytes)} bytes")
-
-        headers = {
-            "Content-Type": "application/json"
-        }
+        
+        # Call HF API with raw binary data (this works!)
+        headers = {}
         if HF_TOKEN:
             headers["Authorization"] = f"Bearer {HF_TOKEN}"
-
-        # Send as JSON with base64-encoded image
-        payload = {
-            "inputs": img_base64
-        }
-
-        logger.info(f"Calling HF API: {HF_API_URL}")
-        response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
-        logger.info(f"HF API status: {response.status_code}")
-
-        if response.status_code != 200:
-            raise Exception(f"HF API error {response.status_code}: {response.text}")
-
-        result = response.json()
-        logger.info(f"Raw response type: {type(result)}")
-
-        # CLIP via HF Inference API returns a dict with 'image_embeds' key
-        if isinstance(result, dict):
-            if "image_embeds" in result:
-                embedding = np.array(result["image_embeds"])
-            elif "embeddings" in result:
-                embedding = np.array(result["embeddings"])
-            elif "data" in result:
-                embedding = np.array(result["data"])
-            else:
-                # Last resort: flatten whatever values we got
-                embedding = np.array(list(result.values())[0])
-        elif isinstance(result, list):
-            embedding = np.array(result)
+            logger.info("Using authenticated HF API request")
         else:
-            raise Exception(f"Unexpected response format: {type(result)}")
-
-        # Flatten in case of extra dimensions (e.g. shape [1, 512])
-        embedding = embedding.flatten()
-        logger.info(f"Embedding shape after flatten: {embedding.shape}")
-
-        norm = np.linalg.norm(embedding)
-        if norm > 0:
-            embedding = embedding / norm
-
-        return embedding.tolist()
-
+            logger.warning("No HF_TOKEN found, using unauthenticated request (may have rate limits)")
+        
+        logger.info(f"Calling HF API: {HF_API_URL}")
+        response = requests.post(HF_API_URL, headers=headers, data=img_bytes, timeout=30)
+        logger.info(f"HF API status: {response.status_code}")
+        
+        if response.status_code == 200:
+            embedding = response.json()
+            logger.info(f"Response type: {type(embedding)}")
+            
+            # Normalize
+            embedding = np.array(embedding)
+            logger.info(f"Embedding shape: {embedding.shape}")
+            
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+            
+            logger.info("Embedding generated successfully")
+            return embedding.tolist()
+        else:
+            error_msg = f"HF API error (status {response.status_code}): {response.text}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+    
     except Exception as e:
-        logger.error(f"generate_embedding error: {e}", exc_info=True)
+        logger.error(f"Error in generate_embedding: {str(e)}", exc_info=True)
         raise
 
 
