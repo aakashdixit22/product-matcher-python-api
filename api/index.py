@@ -9,6 +9,10 @@ from io import BytesIO
 from PIL import Image
 import base64
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
