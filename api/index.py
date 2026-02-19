@@ -6,71 +6,36 @@ from io import BytesIO
 from PIL import Image
 import base64
 import os
-import logging
+import warnings
 from dotenv import load_dotenv
+from transformers import CLIPProcessor, CLIPModel
 
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+warnings.filterwarnings('ignore')
 
 app = Flask(__name__)
 CORS(app)
 
-# Use Hugging Face Inference API (updated to new router endpoint)
-# api-inference.huggingface.co is deprecated, now using router.huggingface.co
-HF_API_URL = "https://router.huggingface.co/hf-inference/models/openai/clip-vit-base-patch32"
-HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
-
-if HF_TOKEN:
-    logger.info(f"HF_TOKEN loaded: Yes (Token: {HF_TOKEN[:10]}...)")
-else:
-    logger.warning("HF_TOKEN not found — running unauthenticated (rate limits may apply)")
-
+# Load CLIP model locally — no external API needed, 100% reliable
+print("🔄 Loading CLIP model (first run downloads ~600MB)...")
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+print("✅ CLIP model loaded!")
 
 def generate_embedding(img):
-    """Generate embedding using HF Inference API"""
-    try:
-        # Convert image to bytes
-        buffered = BytesIO()
-        img.save(buffered, format="JPEG")
-        img_bytes = buffered.getvalue()
-        logger.info(f"Image size: {len(img_bytes)} bytes")
-        
-        # Call HF API with raw binary data (this works!)
-        headers = {}
-        if HF_TOKEN:
-            headers["Authorization"] = f"Bearer {HF_TOKEN}"
-            logger.info("Using authenticated HF API request")
-        else:
-            logger.warning("No HF_TOKEN found, using unauthenticated request (may have rate limits)")
-        
-        logger.info(f"Calling HF API: {HF_API_URL}")
-        response = requests.post(HF_API_URL, headers=headers, data=img_bytes, timeout=30)
-        logger.info(f"HF API status: {response.status_code}")
-        
-        if response.status_code == 200:
-            embedding = response.json()
-            logger.info(f"Response type: {type(embedding)}")
-            
-            # Normalize
-            embedding = np.array(embedding)
-            logger.info(f"Embedding shape: {embedding.shape}")
-            
-            norm = np.linalg.norm(embedding)
-            if norm > 0:
-                embedding = embedding / norm
-            
-            logger.info("Embedding generated successfully")
-            return embedding.tolist()
-        else:
-            error_msg = f"HF API error (status {response.status_code}): {response.text}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
+    """Generate embedding using local CLIP model"""
+    inputs = processor(images=img, return_tensors="pt")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        image_features = model.get_image_features(**inputs)
     
-    except Exception as e:
-        logger.error(f"Error in generate_embedding: {str(e)}", exc_info=True)
-        raise
+    embedding = image_features.detach().numpy()[0]
+    
+    # Normalize
+    norm = np.linalg.norm(embedding)
+    if norm > 0:
+        embedding = embedding / norm
+    return embedding.tolist()
 
 
 def decode_base64_image(b64_string):
@@ -81,126 +46,106 @@ def decode_base64_image(b64_string):
     return Image.open(BytesIO(image_data)).convert("RGB")
 
 
-@app.route("/health", methods=["GET"])
+@app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
-        "status": "healthy",
-        "model": "CLIP-ViT-B-32 (via HF API)",
-        "deployment": "lightweight serverless",
-        "version": "3.2",
-        "authenticated": bool(HF_TOKEN),
+        'status': 'healthy',
+        'model': 'CLIP-ViT-B-32 (local)',
+        'deployment': 'local model',
+        'version': '4.0'
     })
 
 
-@app.route("/generate-embedding", methods=["POST"])
+@app.route('/generate-embedding', methods=['POST'])
 def generate_embedding_endpoint():
     try:
-        logger.info("POST /generate-embedding")
-
-        if "image" in request.files:
-            logger.info("Source: file upload")
-            file = request.files["image"]
-            img = Image.open(file.stream).convert("RGB")
-            source = "file"
-
-        elif request.json and "imageUrl" in request.json:
-            image_url = request.json["imageUrl"]
-            logger.info(f"Source: URL — {image_url}")
-            resp = requests.get(image_url, timeout=15)
-            resp.raise_for_status()
-            img = Image.open(BytesIO(resp.content)).convert("RGB")
-            source = "url"
-
-        elif request.json and "imageBase64" in request.json:
-            logger.info("Source: base64")
-            img = decode_base64_image(request.json["imageBase64"])
-            source = "base64"
-
+        if 'image' in request.files:
+            file = request.files['image']
+            img = Image.open(file.stream).convert('RGB')
+            embedding = generate_embedding(img)
+            return jsonify({
+                'embedding': embedding,
+                'dimension': len(embedding),
+                'source': 'file'
+            })
+        elif request.json and 'imageUrl' in request.json:
+            image_url = request.json['imageUrl']
+            response = requests.get(image_url, timeout=10)
+            img = Image.open(BytesIO(response.content)).convert('RGB')
+            embedding = generate_embedding(img)
+            return jsonify({
+                'embedding': embedding,
+                'dimension': len(embedding),
+                'source': 'url'
+            })
+        elif request.json and 'imageBase64' in request.json:
+            img = decode_base64_image(request.json['imageBase64'])
+            embedding = generate_embedding(img)
+            return jsonify({
+                'embedding': embedding,
+                'dimension': len(embedding),
+                'source': 'base64'
+            })
         else:
-            logger.warning("No image data in request")
-            return jsonify({"error": "No image provided. Send 'image' file, 'imageUrl', or 'imageBase64'."}), 400
-
-        embedding = generate_embedding(img)
-        return jsonify({
-            "embedding": embedding,
-            "dimension": len(embedding),
-            "source": source,
-        })
-
+            return jsonify({'error': 'No image provided'}), 400
     except Exception as e:
-        logger.error(f"/generate-embedding error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
 
-@app.route("/batch-embeddings", methods=["POST"])
+@app.route('/batch-embeddings', methods=['POST'])
 def batch_embeddings():
     try:
-        logger.info("POST /batch-embeddings")
-        data = request.json or {}
-        image_urls = data.get("imageUrls", [])
-
+        data = request.json
+        image_urls = data.get('imageUrls', [])
+        
         if not image_urls:
-            return jsonify({"error": "No image URLs provided"}), 400
-
-        logger.info(f"Batch size: {len(image_urls)}")
+            return jsonify({'error': 'No image URLs provided'}), 400
+        
         results = []
-
         for idx, url in enumerate(image_urls):
             try:
-                logger.info(f"  [{idx+1}/{len(image_urls)}] {url}")
-                resp = requests.get(url, timeout=15)
-                resp.raise_for_status()
-                img = Image.open(BytesIO(resp.content)).convert("RGB")
+                response = requests.get(url, timeout=10)
+                img = Image.open(BytesIO(response.content)).convert('RGB')
                 embedding = generate_embedding(img)
-                results.append({"url": url, "embedding": embedding, "success": True})
+                results.append({
+                    'url': url,
+                    'embedding': embedding,
+                    'success': True
+                })
             except Exception as e:
-                logger.error(f"  Failed: {e}")
-                results.append({"url": url, "error": str(e), "success": False})
-
-        successful = sum(1 for r in results if r["success"])
-        logger.info(f"Batch done: {successful}/{len(image_urls)} successful")
-
+                results.append({
+                    'url': url,
+                    'error': str(e),
+                    'success': False
+                })
+        
         return jsonify({
-            "results": results,
-            "total": len(image_urls),
-            "successful": successful,
+            'results': results,
+            'total': len(image_urls),
+            'successful': sum(1 for r in results if r['success'])
         })
-
     except Exception as e:
-        logger.error(f"/batch-embeddings error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
 
-@app.route("/cosine-similarity", methods=["POST"])
+@app.route('/cosine-similarity', methods=['POST'])
 def cosine_similarity():
     try:
-        logger.info("POST /cosine-similarity")
-        data = request.json or {}
-
-        if "embedding1" not in data or "embedding2" not in data:
-            return jsonify({"error": "Both 'embedding1' and 'embedding2' are required"}), 400
-
-        e1 = np.array(data["embedding1"], dtype=np.float64)
-        e2 = np.array(data["embedding2"], dtype=np.float64)
-
-        if e1.shape != e2.shape:
-            return jsonify({"error": f"Shape mismatch: {e1.shape} vs {e2.shape}"}), 400
-
-        norm1 = np.linalg.norm(e1)
-        norm2 = np.linalg.norm(e2)
-
-        if norm1 == 0 or norm2 == 0:
-            return jsonify({"error": "One or both embeddings are zero vectors"}), 400
-
-        similarity = float(np.dot(e1, e2) / (norm1 * norm2))
-        logger.info(f"Cosine similarity: {similarity:.4f}")
-
-        return jsonify({"similarity": similarity})
-
+        data = request.json
+        embedding1 = np.array(data['embedding1'])
+        embedding2 = np.array(data['embedding2'])
+        
+        dot_product = np.dot(embedding1, embedding2)
+        norm1 = np.linalg.norm(embedding1)
+        norm2 = np.linalg.norm(embedding2)
+        
+        similarity = dot_product / (norm1 * norm2)
+        
+        return jsonify({'similarity': float(similarity)})
     except Exception as e:
-        logger.error(f"/cosine-similarity error: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+        return jsonify({'error': str(e)}), 500
 
 
-if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+if __name__ == '__main__':
+    print("📍 Server running at http://localhost:5000")
+    app.run(host='0.0.0.0', port=5000, debug=True)
