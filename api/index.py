@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app)
 
-# Use Hugging Face Inference API (no local model needed!)
-HF_API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
+# Use Hugging Face Inference API (updated to new router endpoint)
+# api-inference.huggingface.co is deprecated, now using router.huggingface.co
+HF_API_URL = "https://router.huggingface.co/models/openai/clip-vit-base-patch32"
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 
 if HF_TOKEN:
