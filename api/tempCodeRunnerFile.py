@@ -1,3 +1,6 @@
+
+
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
@@ -12,7 +15,8 @@ CORS(app)
 
 # Use Hugging Face Inference API (no local model needed!)
 HF_API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
-HF_TOKEN = os.environ.get("HF_TOKEN")  # Set this in Vercel environment variables
+# Try both possible environment variable names
+HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 
 def generate_embedding(img):
     """Generate embedding using HF Inference API"""
@@ -22,22 +26,31 @@ def generate_embedding(img):
     img_bytes = buffered.getvalue()
     
     # Call HF API
-    headers = {}
+    headers = {"Content-Type": "application/octet-stream"}
     if HF_TOKEN:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
     
     response = requests.post(HF_API_URL, headers=headers, data=img_bytes)
     
     if response.status_code == 200:
-        embedding = response.json()
+        result = response.json()
+        # HF Inference API returns embeddings in different formats depending on the model
+        # For CLIP, it might be a direct array or nested in a key
+        if isinstance(result, list):
+            embedding = np.array(result)
+        elif isinstance(result, dict):
+            # Try common keys where embeddings might be stored
+            embedding = np.array(result.get('embeddings', result.get('data', result)))
+        else:
+            embedding = np.array(result)
+        
         # Normalize
-        embedding = np.array(embedding)
         norm = np.linalg.norm(embedding)
         if norm > 0:
             embedding = embedding / norm
         return embedding.tolist()
     else:
-        raise Exception(f"HF API error: {response.text}")
+        raise Exception(f"HF API error (status {response.status_code}): {response.text}")
 
 @app.route('/health', methods=['GET'])
 def health_check():
