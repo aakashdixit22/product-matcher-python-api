@@ -23,11 +23,15 @@ app = Flask(__name__)
 CORS(app)
 
 # Use Hugging Face Inference API (no local model needed!)
-HF_API_URL = "https://api-inference.huggingface.co/models/openai/clip-vit-base-patch32"
+# Using sentence-transformers CLIP model which works with Inference API
+HF_API_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
 # Try both possible environment variable names
 HF_TOKEN = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_TOKEN")
 
-logger.info(f"HF_TOKEN loaded: {'Yes' if HF_TOKEN else 'No (running without auth)'}")
+if HF_TOKEN:
+    logger.info(f"HF_TOKEN loaded: Yes (Token: {HF_TOKEN[:10]}...)")
+else:
+    logger.info("HF_TOKEN loaded: No (running without auth)")
 
 def generate_embedding(img):
     """Generate embedding using HF Inference API"""
