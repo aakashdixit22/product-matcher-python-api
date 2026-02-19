@@ -146,6 +146,6 @@ def cosine_similarity():
         return jsonify({'error': str(e)}), 500
 
 
-if __name__ == '__main__':
-    print("📍 Server running at http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+# if __name__ == '__main__':
+#     print("📍 Server running at http://localhost:5000")
+#     app.run(host='0.0.0.0', port=5000, debug=True)
